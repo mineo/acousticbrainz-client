@@ -100,10 +100,9 @@ def process_file(filepath):
         features["metadata"]["version"]["essentia_build_sha"] = config.settings["essentia_build_sha"]
         features["metadata"]["audio_properties"]["lossless"] = lossless
 
-        # submit_features(recid, features)
+        submit_features(recid, features)
 
         os.unlink(tmpname)
-        # add_to_filelist(filepath)
         return filepath
     else:
         print " - no recid"
@@ -122,7 +121,6 @@ def process(path, executor):
         exit(path + "does not exist")
     path = os.path.abspath(path)
     if os.path.isfile(path):
-        # process_file(path, executor)
         yield executor.submit(process_file, path)
     elif os.path.isdir(path):
         yield process_directory(path, executor)
