@@ -1,4 +1,6 @@
+import futures
 import json
+import multiprocessing
 import os
 import subprocess
 import tempfile
@@ -16,6 +18,8 @@ config.load_settings()
 
 processed_files = set()
 PROCESSED_FILE_LIST = os.path.expanduser("~/.abzsubmit.log")
+FILE_LIST_LOCK = multiprocessing.RLock()
+
 def load_processed_filelist():
     global processed_files
     if os.path.exists(PROCESSED_FILE_LIST):
@@ -23,14 +27,21 @@ def load_processed_filelist():
         lines = [l.strip() for l in list(fp)]
         processed_files = set(lines)
 
-def add_to_filelist(filepath):
+def add_to_filelist(future):
     # TODO: This will slow down as more files are processed. We should
     # keep an open file handle and append to it
+    if future.cancelled():
+        return
+    FILE_LIST_LOCK.acquire()
+    filepath = future.result()
     processed_files.add(filepath)
-    fp = open(PROCESSED_FILE_LIST, "w")
-    for f in processed_files:
-        fp.write("%s\n" % f)
-    fp.close()
+    try:
+        fp = open(PROCESSED_FILE_LIST, "w")
+        for f in processed_files:
+            fp.write("%s\n" % f)
+        fp.close()
+    finally:
+        FILE_LIST_LOCK.release()
 
 def is_processed(filepath):
     return filepath in processed_files
@@ -89,27 +100,37 @@ def process_file(filepath):
         features["metadata"]["version"]["essentia_build_sha"] = config.settings["essentia_build_sha"]
         features["metadata"]["audio_properties"]["lossless"] = lossless
 
-        submit_features(recid, features)
+        # submit_features(recid, features)
 
         os.unlink(tmpname)
-        add_to_filelist(filepath)
+        # add_to_filelist(filepath)
+        return filepath
     else:
         print " - no recid"
 
-def process_directory(directory_path):
+def process_directory(directory_path, executor):
     print "processing directory", directory_path
 
     for dirpath, dirnames, filenames in os.walk(directory_path):
         for f in filenames:
             if f.lower().endswith(config.settings["extensions"]):
-                process_file(os.path.abspath(os.path.join(dirpath, f)))
+                yield executor.submit(process_file, (os.path.abspath(os.path.join(dirpath, f))))
 
 
-def process(path):
+def process(path, executor):
     if not os.path.exists(path):
         exit(path + "does not exist")
     path = os.path.abspath(path)
     if os.path.isfile(path):
-        process_file(path)
+        # process_file(path, executor)
+        yield executor.submit(process_file, path)
     elif os.path.isdir(path):
-        process_directory(path)
+        yield process_directory(path, executor)
+
+def main(args):
+    load_processed_filelist()
+    with futures.ProcessPoolExecutor(args.processes) as executor:
+        for path in args.p:
+            for f in process(path, executor):
+                f.add_done_callback(add_to_filelist)
+        executor.shutdown()

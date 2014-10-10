@@ -3,17 +3,14 @@
 import argparse
 from abz import acousticbrainz
 
-def main(paths):
-    acousticbrainz.load_processed_filelist()
-    for path in paths:
-        acousticbrainz.process(path)
-
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Acousticbrainz client")
     p.add_argument("p", help="Path to upload", nargs='*')
+    p.add_argument("--processes", help="Number of processes to spawn",
+                   default=None, type=int, action="store")
 
     args = p.parse_args()
     if args.p:
-        main(args.p)
+        acousticbrainz.main(args)
     else:
         p.print_usage()

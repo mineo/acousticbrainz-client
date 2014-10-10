@@ -1,2 +1,3 @@
 pytaglib==0.4.1
 requests==2.4.3
+futures==2.2.0
