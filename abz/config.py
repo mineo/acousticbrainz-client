@@ -1,3 +1,7 @@
+# Copyright 2014 Music Technology Group - Universitat Pompeu Fabra
+# acousticbrainz-client is available under the terms of the GNU
+# General Public License, version 3 or higher. See COPYING for more details.
+
 import ConfigParser
 import os
 import hashlib
@@ -18,9 +22,9 @@ def load_settings():
 
     essentia = config.get("essentia", "path")
     if not os.path.isabs(essentia):
-        essentia = os.path.abspath(essentia)
+        essentia = os.path.abspath(os.path.expanduser(essentia))
     if not os.path.exists(essentia):
-        raise Exception ("Cannot find the extractor")
+        raise Exception ("Cannot find the extractor %r" % essentia)
 
     h = hashlib.sha1()
     h.update(open(essentia, "rb").read())

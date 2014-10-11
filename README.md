@@ -34,8 +34,8 @@ your PATH.
 The extractor is provided as part of the essentia project. You can compile
 your own extractor if you want. Just download essentia and compile it with examples
 
-   ./waf configure --with-examples
-   ./waf
+    ./waf configure --with-examples
+    ./waf
 
 and get the resulting file from `build/src/examples/streaming_extractor_music`
 
@@ -68,3 +68,8 @@ the same directory as the submission script.
 The log file lists each file that has been uploaded. This is so that the script
 does not send updates twice for the same file. When you have finished uploading
 features you can delete this file.
+
+License
+-------
+This application is Copyright Music Technology Group, Universitat Pompeu Fabra.
+It is available under the terms of the GNU GPL v3+. See COPYING for details.

@@ -1,3 +1,7 @@
+# Copyright 2014 Music Technology Group - Universitat Pompeu Fabra
+# acousticbrainz-client is available under the terms of the GNU
+# General Public License, version 3 or higher. See COPYING for more details.
+
 import futures
 import json
 import multiprocessing
@@ -75,6 +79,7 @@ def submit_features(recordingid, features):
     host = config.settings["host"]
     url = urlparse.urlunparse(('http', host, '/%s/low-level' % recordingid, '', '', ''))
     r = requests.post(url, data=featstr)
+    r.raise_for_status()
 
 def process_file(filepath):
     print "Processing file", filepath
@@ -100,7 +105,11 @@ def process_file(filepath):
         features["metadata"]["version"]["essentia_build_sha"] = config.settings["essentia_build_sha"]
         features["metadata"]["audio_properties"]["lossless"] = lossless
 
-        submit_features(recid, features)
+        try:
+            submit_features(recid, features)
+        except requests.exceptions.HTTPError as e:
+            print " ** Got an error submitting the track. Error was:"
+            print e.response.text
 
         os.unlink(tmpname)
         return filepath
