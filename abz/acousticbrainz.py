@@ -2,6 +2,7 @@
 # acousticbrainz-client is available under the terms of the GNU
 # General Public License, version 3 or higher. See COPYING for more details.
 
+from __future__ import print_function
 import futures
 import json
 import multiprocessing
@@ -10,6 +11,7 @@ import subprocess
 import tempfile
 import urlparse
 import uuid
+import sqlite3
 
 import requests
 import taglib
@@ -19,36 +21,22 @@ import config
 from sys import exit
 
 config.load_settings()
+conn = sqlite3.connect(config.get_sqlite_file())
 
-processed_files = set()
-PROCESSED_FILE_LIST = os.path.expanduser("~/.abzsubmit.log")
-FILE_LIST_LOCK = multiprocessing.RLock()
-
-def load_processed_filelist():
-    global processed_files
-    if os.path.exists(PROCESSED_FILE_LIST):
-        fp = open(PROCESSED_FILE_LIST)
-        lines = [l.strip() for l in list(fp)]
-        processed_files = set(lines)
-
-def add_to_filelist(future):
-    # TODO: This will slow down as more files are processed. We should
-    # keep an open file handle and append to it
-    if future.cancelled():
-        return
-    FILE_LIST_LOCK.acquire()
-    filepath = future.result()
-    processed_files.add(filepath)
-    try:
-        fp = open(PROCESSED_FILE_LIST, "w")
-        for f in processed_files:
-            fp.write("%s\n" % f)
-        fp.close()
-    finally:
-        FILE_LIST_LOCK.release()
+def add_to_filelist(filepath, reason=None):
+    query = """insert into filelog(filename, reason) values(?, ?)"""
+    c = conn.cursor()
+    r = c.execute(query, (filepath.decode("utf-8"), reason))
+    conn.commit()
 
 def is_processed(filepath):
-    return filepath in processed_files
+    query = """select * from filelog where filename = ?"""
+    c = conn.cursor()
+    r = c.execute(query, (filepath.decode("utf-8"), ))
+    if len(r.fetchall()):
+        return True
+    else:
+        return False
 
 def get_musicbrainz_recordingid(filepath):
     f = taglib.File(filepath)
@@ -68,10 +56,13 @@ def get_musicbrainz_recordingid(filepath):
             return None
 
 def run_extractor(input_path, output_path):
+    """
+    :raises subprocess.CalledProcessError: if the extractor exits with a non-zero
+                                           return code
+    """
     extractor = config.settings["essentia_path"]
     args = [extractor, input_path, output_path]
-    p = subprocess.Popen(args)
-    p.communicate()
+    subprocess.check_call(args)
 
 def submit_features(recordingid, features):
     featstr = json.dumps(features)
@@ -81,43 +72,63 @@ def submit_features(recordingid, features):
     r = requests.post(url, data=featstr)
     r.raise_for_status()
 
+def extractor_output_file_name(base):
+    """
+    Returns `base` + ".json" if that file exists and just `base` otherwise.
+    """
+    maybename = base + os.extsep + "json"
+    if os.path.isfile(maybename):
+        return maybename
+    return base
+
+# codec names from ffmpeg
+lossless_codecs = ["alac", "ape", "flac", "shorten", "tak", "truehd", "tta", "wmalossless"]
 def process_file(filepath):
-    print "Processing file", filepath
+    print("Processing file %s" % filepath)
     if is_processed(filepath):
-        print " * already processed, skipping"
+        print(" * already processed, skipping")
         return
     recid = get_musicbrainz_recordingid(filepath)
-    # TODO: We need to decide if this is lossless
-    lossless = filepath.lower().endswith(".flac")
 
     if recid:
-        print " - has recid", recid
-        fd, tmpname = tempfile.mkstemp()
+        print(" - has recid %s" % recid)
+        fd, tmpname = tempfile.mkstemp(suffix='.json')
         os.close(fd)
         os.unlink(tmpname)
-        run_extractor(filepath, tmpname)
-        # The extractor adds .json to the filename you give it, so
-        # we don't pass that, and use it afterwards to read the file.
-        # This is an abuse of mkstemp, sorry.
-        tmpname = "%s.json" % tmpname
-
-        features = json.load(open(tmpname))
-        features["metadata"]["version"]["essentia_build_sha"] = config.settings["essentia_build_sha"]
-        features["metadata"]["audio_properties"]["lossless"] = lossless
-
         try:
-            submit_features(recid, features)
-        except requests.exceptions.HTTPError as e:
-            print " ** Got an error submitting the track. Error was:"
-            print e.response.text
+            run_extractor(filepath, tmpname)
+        except subprocess.CalledProcessError as e:
+            print(" ** The extractor's return code was %s" % e.returncode)
+            add_to_filelist(filepath, "extractor")
+        else:
+            tmpname = extractor_output_file_name(tmpname)
+            try:
+                features = json.load(open(tmpname))
+                features["metadata"]["version"]["essentia_build_sha"] = config.settings["essentia_build_sha"]
+                encoder = features["metadata"]["audio_properties"]["codec"]
+                # There's a bunch of pcm types, so check them separately
+                lossless = encoder in lossless_codecs or encoder.startswith("pcm_")
+                features["metadata"]["audio_properties"]["lossless"] = lossless
 
-        os.unlink(tmpname)
-        return filepath
+                try:
+                    submit_features(recid, features)
+                except requests.exceptions.HTTPError as e:
+                    print(" ** Got an error submitting the track. Error was:")
+                    print(e.response.text)
+                add_to_filelist(filepath)
+            except ValueError:
+                print(" ** Failed to read the output for this file to submit")
+                add_to_filelist(filepath, "json")
+
+        finally:
+            tmpname = extractor_output_file_name(tmpname)
+            if os.path.isfile(tmpname):
+                os.unlink(tmpname)
     else:
-        print " - no recid"
+        print(" - no recid")
 
 def process_directory(directory_path, executor):
-    print "processing directory", directory_path
+    print("processing directory %s" % directory_path)
 
     for dirpath, dirnames, filenames in os.walk(directory_path):
         for f in filenames:
