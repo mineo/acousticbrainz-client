@@ -146,7 +146,6 @@ def process(path, executor):
         yield process_directory(path, executor)
 
 def main(args):
-    load_processed_filelist()
     with futures.ProcessPoolExecutor(args.processes) as executor:
         for path in args.p:
             for f in process(path, executor):
